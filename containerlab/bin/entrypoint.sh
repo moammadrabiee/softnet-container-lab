@@ -4,7 +4,6 @@ set -euo pipefail
 HOSTNAME=$(hostname)
 CFG_DIR="/etc/nodes"
 CFG_FILE="${CFG_DIR}/${HOSTNAME}.cfg"
-ETH1_INTERFACE="eth1"
 
 echo "=== Node entrypoint: ${HOSTNAME} ==="
 
@@ -19,31 +18,56 @@ source "${CFG_FILE}"
 ip link set lo up
 echo "[OK] Loopback interface up"
 
-ip link set "${ETH1_INTERFACE}" up
-echo "[OK] ${ETH1_INTERFACE} interface up"
+if [[ "${NODE_ROLE}" == "router" ]]; then
 
-ip addr flush dev "${ETH1_INTERFACE}" 2>/dev/null || true
-ip addr add "${NODE_IP}/${NODE_PREFIX}" dev "${ETH1_INTERFACE}"
-echo "[OK] IPv4 configured: ${NODE_IP}/${NODE_PREFIX}"
+    ip link set eth1 up
+    ip link set eth2 up
 
-ip -6 addr add "${NODE_IP6}/${NODE_PREFIX6}" dev "${ETH1_INTERFACE}" nodad
-echo "[OK] IPv6 configured: ${NODE_IP6}/${NODE_PREFIX6}"
+    ip -4 addr flush dev eth1 2>/dev/null || true
+    ip -4 addr flush dev eth2 2>/dev/null || true
+
+    ip -6 addr flush dev eth1 scope global 2>/dev/null || true
+    ip -6 addr flush dev eth2 scope global 2>/dev/null || true
+
+    ip addr add "${ETH1_IP}/${ETH1_PREFIX}" dev eth1
+    ip addr add "${ETH2_IP}/${ETH2_PREFIX}" dev eth2
+
+    ip -6 addr add "${ETH1_IP6}/${ETH1_PREFIX6}" dev eth1 nodad
+    ip -6 addr add "${ETH2_IP6}/${ETH2_PREFIX6}" dev eth2 nodad
+
+    sysctl -w net.ipv4.ip_forward=1
+    sysctl -w net.ipv6.conf.all.forwarding=1
+    sysctl -w net.ipv6.conf.eth1.forwarding=1
+    sysctl -w net.ipv6.conf.eth2.forwarding=1
+
+    echo "[OK] Router configured"
+
+else
+
+    ip link set eth1 up
+
+    ip -4 addr flush dev eth1 2>/dev/null || true
+    ip -6 addr flush dev eth1 scope global 2>/dev/null || true
+
+    ip addr add "${ETH1_IP}/${ETH1_PREFIX}" dev eth1
+    ip -6 addr add "${ETH1_IP6}/${ETH1_PREFIX6}" dev eth1 nodad
+
+    ip route replace default via "${GW_IP}" dev eth1
+    ip -6 route replace default via "${GW_IP6}" dev eth1
+
+    echo "[OK] Host configured"
+
+fi
 
 echo ""
 echo "[INFO] Network configuration:"
 ip addr show
 echo ""
 
-if ping -c 2 -W 2 "${PEER_IP}" >/dev/null 2>&1; then
-    echo "[OK] Peer IPv4 (${PEER_IP}) reachable"
-else
-    echo "[WARN] Peer IPv4 (${PEER_IP}) not reachable"
-fi
-
-if ping -6 -c 2 -W 2 "${PEER_IP6}" >/dev/null 2>&1; then
-    echo "[OK] Peer IPv6 (${PEER_IP6}) reachable"
-else
-    echo "[WARN] Peer IPv6 (${PEER_IP6}) not reachable"
-fi
+echo "[INFO] Routes:"
+ip route show
+ip -6 route show
+echo ""
 
 echo "[INFO] Node ${HOSTNAME} ready"
+
